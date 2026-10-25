@@ -1,0 +1,67 @@
+name: Enrichissement agences (Searlo Places)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_rows:
+        description: "Limiter à N agences (0 = toutes) — pratique pour un premier test"
+        default: "0"
+      retry_introuvables:
+        description: "Retenter les agences marquées introuvables"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# un seul run à la fois, sinon deux jobs se marchent dessus dans agences.csv
+concurrency:
+  group: agences-searlo
+  cancel-in-progress: false
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # maximum GitHub ; le script s'arrête proprement à 330 min
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Lancer l'enrichissement (logs en direct)
+        env:
+          SEARLO_KEYS: ${{ secrets.SEARLO_KEYS }}   # sk_xxx;sk_yyy;sk_zzz (ordre d'utilisation)
+          MAX_ROWS: ${{ inputs.max_rows }}
+          RETRY_NOT_FOUND: ${{ inputs.retry_introuvables }}
+          PYTHONUNBUFFERED: "1"
+          PYTHONIOENCODING: utf-8
+        run: python -u enrichir_agences.py
+
+      # if: always() -> sauvegarde même si le run échoue, est annulé ou atteint la limite de temps
+      - name: Sauvegarder agences.csv dans le repo
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for f in agences.csv rapport_agences.md; do [ -f "$f" ] && git add "$f"; done
+          if git diff --cached --quiet; then
+            echo "Rien à sauvegarder"
+          else
+            git commit -m "agences: mise à jour $(date -u '+%Y-%m-%d %H:%M') UTC"
+            git pull --rebase
+            git push
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agences
+          path: |
+            agences.csv
+            rapport_agences.md
+          if-no-files-found: ignore
