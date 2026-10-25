@@ -1,0 +1,64 @@
+name: Rattrapage agences (Serper)
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_indetermine:
+        description: "Traiter aussi les 14 cas indéterminés (true/false)"
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rattrapage-serper
+  cancel-in-progress: false
+
+jobs:
+  rattrapage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install requests
+
+      - name: Vérifier les fichiers d'entrée
+        run: |
+          for f in a_rechercher_manuellement.csv agences_nettoye.csv leboncoin_extraction_final.csv rattrapage_serper.py; do
+            test -s "$f" || { echo "❌ Fichier manquant : $f"; exit 1; }
+          done
+
+      - name: Lancer le rattrapage Serper
+        env:
+          SERPER_KEY: ${{ secrets.SERPER_KEY }}
+          INCLUDE_INDETERMINE: ${{ inputs.include_indetermine }}
+          PYTHONIOENCODING: utf-8
+        run: |
+          python rattrapage_serper.py | tee rattrapage.log
+          {
+            echo "## Rattrapage Serper"
+            grep "^Bilan" rattrapage.log || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enregistrer les résultats dans le dépôt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add agences_serper.csv agences_final.csv
+          git diff --cached --quiet || git commit -m "Rattrapage Serper : résultats [skip ci]"
+          git push
+
+      - name: Garder une copie en artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rattrapage-serper
+          path: |
+            agences_serper.csv
+            agences_final.csv
+            rattrapage.log
